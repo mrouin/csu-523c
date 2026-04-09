@@ -26,7 +26,7 @@ knitr::opts_chunk$set(
 ```{r}
 #| echo: false
 #| fig-align: center
-knitr::include_graphics('img/03-aclu.jpg')
+#knitr::include_graphics('img/03-aclu.jpg')
 ```
 
 The spatial analysis skills in this lab — building `sf` objects from
@@ -94,7 +94,7 @@ then load:
 ```{r}
 #| code-fold: false
 pacman::p_load(
-  tidyverse, sf, units, tigris, rnaturalearth, gghighlight, ggrepel, flextable
+  tidyverse, sf, units, tigris, rnaturalearth, gghighlight, ggrepel, flextable, leaflet
 )
 
 options(tigris_use_cache = TRUE) 
@@ -496,11 +496,13 @@ gradient - Show the CONUS outline - Label the 5 farthest cities with
 `ggrepel`
 
 ```{r}
-national_border <- cities_conus |> 
+cities_conus <- cities_conus |> 
   mutate(dist_to_border = as.numeric(dist_to_border), 
          dist_to_state = as.numeric(dist_to_state),
          dist_to_mexico = as.numeric(dist_to_mexico),
-         dist_to_canada = as.numeric(dist_to_canada)) |> 
+         dist_to_canada = as.numeric(dist_to_canada))
+
+national_border <- cities_conus |> 
   slice_max(dist_to_border, n = 5)
 
 ggplot()+
@@ -595,9 +597,13 @@ less than 100 km. Label the 5 most populous cities in this zone with
 :::
 
 ```{r}
-eq_distance <- cities_conus |> 
-  mutate(border_diff = abs(dist_to_mexico - dist_to_canada)) |> 
-  filter(border_diff < 1000) |>
+cities_conus <- cities_conus |> 
+  mutate(border_diff = abs(dist_to_mexico - dist_to_canada))
+
+eq_distance <- cities_conus |>
+  filter(border_diff < 100)
+
+eq_top <- eq_distance |>
   slice_max(population, n = 5)
   
 ggplot()+
@@ -607,14 +613,13 @@ ggplot()+
   geom_sf(data = states |>
             st_transform(eqdc),
           color = "black", linewidth = 0.5, linetype = "solid") +
-  geom_sf(data = cities_conus, 
+  geom_sf(data = eq_distance,
           aes(color = border_diff), size = 0.5, alpha = 0.5) +
-  gghighlight(border_diff < 100) +
-  geom_label_repel(data = eq_distance,
+  geom_label_repel(data = eq_top,
     aes(geometry = geometry, label = city),
     stat = "sf_coordinates", size = 2, color = "navy") +
   scale_color_viridis_c(name = "Equidistance from the Canada and Mexico Borders (km)", direction = -1) +
-  labs(title = "Figure 3. Top 5 Populated Cities that are Equidistant from the Canada and Mexico Borders",
+  labs(title = "Figure 4. Top 5 Populated Cities that are Equidistant from the Canada and Mexico Borders",
        x = "Longitude", y = "Latitude")
 ```
 
@@ -623,6 +628,13 @@ geographically, (2) does it surprise you that this band cuts through the
 interior of the country where it does? (3) What does this zone imply
 about the relative influence of Canadian vs. Mexican climate systems on
 cities in this corridor?
+
+The equidistnace zone runs through Northern California and creates a bit
+of a downward curve through the plains and down through Alabama and
+Georgia. The curve of the band does not surprise me since the southern
+states are further from Mexico's border than those in the plains. This
+curve may indicate that Canada's climate has a greater influence in the
+east and Mexico's climate has a greater influence in the west.
 
 > ...
 
@@ -645,7 +657,7 @@ policy. Their analysis is
 ```{r}
 #| echo: false
 #| fig-align: center
-knitr::include_graphics('img/03-aclu.jpg')
+#knitr::include_graphics('img/03-aclu.jpg')
 ```
 
 100 miles ≈ **160 kilometers**. Your distance calculations are already
@@ -671,7 +683,20 @@ your calculation carefully.
 :::
 
 ```{r}
+#cities within the 100-mile zone
+zone_cities <- cities_conus |> 
+  filter(dist_to_border < 160)
 
+#total population living in these cities
+population_zone <- zone_cities |> 
+  summarize(sum(population))
+
+#percentage of total US city population this represents
+population_total <- cities_conus |> 
+  summarize(sum(population))
+
+percentage_population = population_zone/population_total*100
+#yes, these results match those noted in the ACLU article above
 ```
 
 In 2–3 sentences: (1) report the percentage and compare it to the ACLU's
@@ -681,6 +706,15 @@ water resources professional might need to navigate federal
 jurisdictional boundaries in a similar way — where a regulatory zone
 defined by distance from a physical boundary changes what analysis or
 permitting is required.
+
+The data indicates that 65% of the US city population lives within the
+100-mile zone, which is higher than I anticipated. When you look at the
+cities that are included within the 100-mile zone, there are many major
+cities whose population accounts for a large percentage of the nation's
+population. One way this function could be used by water resources
+professional during a project establishment phase where the team needs
+to avoid building within a certain zone surrounding a water feature to
+avoid permitting issues.
 
 > ...
 
@@ -694,7 +728,24 @@ Create a map highlighting all cities within the 100-mile zone using
 -   Label the **10 most populous** cities in the zone
 
 ```{r}
-
+zone_top <- zone_cities |>
+  slice_max(population, n = 10)
+  
+ggplot()+
+  geom_sf(data = na_boundaries |> 
+            st_transform(eqdc),
+          color = "black", linewidth = 0.5, linetype = "solid") +
+  geom_sf(data = states |>
+            st_transform(eqdc),
+          color = "black", linewidth = 0.5, linetype = "solid") +
+  geom_sf(data = zone_cities,
+          aes(color = dist_to_border), size = 0.5, alpha = 0.5) +
+  geom_label_repel(data = zone_top,
+    aes(geometry = geometry, label = city),
+    stat = "sf_coordinates", size = 2, color = "navy") +
+  scale_color_gradient(name = "Distance from Border (km)", low = "orange", 
+                       high = "darkred") +
+  labs(title = "Figure 5. Top 10 Populated Cities within 160 km of the National Border",x = "Longitude", y = "Latitude")
 ```
 
 ## 4.3 Most Populous City per State in the Zone
@@ -712,7 +763,25 @@ filter(cities, as.numeric(dist_to_border) < 160) |>
 :::
 
 ```{r}
+zone_top_state <- zone_cities |>
+  group_by(state_name) |> 
+  slice_max(population, n = 1)
 
+ggplot()+
+  geom_sf(data = na_boundaries |> 
+            st_transform(eqdc),
+          color = "black", linewidth = 0.5, linetype = "solid") +
+  geom_sf(data = states |>
+            st_transform(eqdc),
+          color = "black", linewidth = 0.5, linetype = "solid") +
+  geom_sf(data = zone_cities,
+          aes(color = dist_to_border), size = 0.5, alpha = 0.5) +
+  geom_label_repel(data = zone_top_state,
+    aes(geometry = geometry, label = city),
+    stat = "sf_coordinates", size = 2, color = "navy") +
+  scale_color_gradient(name = "Distance from Border (km)", low = "orange", 
+                       high = "darkred")+
+  labs(title = "Figure 5. Top Populated City in each state within 160 km of the National Border", x = "Longitude", y = "Latitude")
 ```
 
 In 2–3 sentences: (1) how many states have at least one city in the
@@ -721,6 +790,28 @@ zone — what does that tell you about that state's geography? (3) How
 might the jurisdictional boundary created by this rule create challenges
 for environmental monitoring programs that cross state or national
 boundaries?
+
+```{r}
+populated <- cities_conus |>
+  st_drop_geometry() |>
+  slice_max(population, n = 1, by = state_name) |>
+  select(city, state_name, population, border_diff) |> 
+  filter(border_diff >= 100) |>
+  arrange(desc(population))
+
+joined_top <- zone_top_state |> 
+  full_join(populated) |>
+  count(state_name) |>
+  filter(n > 1)
+```
+
+There are 35 states that have a city within the zone and there are 13
+states where the most populous city is not within the zone. This
+indicates that their most populous city is (potentially) not impacted by
+immigration from either border or any ports, though I don't think there
+is enough data to prove this correlation. Environmental monitoring
+programs that deal with cross state/nation relations may be hindered by
+differing policies.
 
 > ...
 
@@ -773,13 +864,100 @@ options. Remember that `leaflet` works with WGS84 coordinates
 :::
 
 ```{r}
+??leaflet
+cities_conus <- cities_conus |>
+  mutate(dist_to_border = as.numeric(dist_to_border),
+    dist_to_state  = as.numeric(dist_to_state),
+    dist_to_mexico = as.numeric(dist_to_mexico),
+    dist_to_canada = as.numeric(dist_to_canada))
 
+#check and change crs
+st_crs(states)
+st_crs(cities_conus)
+st_crs(na_boundaries)
+st_crs(eq_distance)
+st_crs(zone_cities)
+
+leaf_states <- states |> 
+  st_transform(4326)
+
+leaf_cities  <- cities_conus |> 
+  st_transform(4326)
+
+leaf_eq_dist <- eq_distance |> 
+  st_transform(4326)
+
+leaf_zone <- zone_cities |> 
+  st_transform(4326)
+
+#color city distance
+city_color <- colorNumeric("viridis", domain = leaf_cities$dist_to_border, 
+                           reverse = TRUE)
+
+#popups
+map_popup <- function(city, state, population, border, state_border, mexico, canada) 
+  {glue::glue("<b>{city}</b>, {state}<br>
+    Population: {scales::comma(population)}<br>
+    Distance to national border: {round(border, 1)} km<br>
+    Distance to state border: {round(state_border, 1)} km<br>
+    Distance to Mexico: {round(mexico, 1)} km<br>
+    Distance to Canada: {round(canada, 1)} km")}
+  
+leaf_cities <- leaf_cities |>
+  mutate(popup = map_popup(city, state_name, population,
+                            dist_to_border, dist_to_state,
+                            dist_to_mexico, dist_to_canada))
+
+leaf_eq_dist <- leaf_eq_dist |>
+  mutate(popup = map_popup(city, state_name, population,
+                            dist_to_border, dist_to_state,
+                            dist_to_mexico, dist_to_canada))
+
+leaf_zone <- leaf_zone |>
+  mutate(popup = map_popup(city, state_name, population,
+                            dist_to_border, dist_to_state,
+                            dist_to_mexico, dist_to_canada))
+```
+
+```{r}
+#leaflet map
+leaflet() |> 
+  addProviderTiles("OpenStreetMap", group = "OpenStreetMap") |> 
+  addPolygons(data = leaf_states, color = "black", weight = 0.5, 
+               group = "State Boundaries") |> 
+  addCircleMarkers(data = leaf_eq_dist, radius = 0.2, 
+                   color = "orange", stroke = TRUE,
+                   fillOpacity = 0.2, popup = ~popup, 
+                   group = "Equidistance Zone from National Border") |> 
+   addCircleMarkers(data = leaf_zone, radius = 0.2, 
+                   color = "red", stroke = TRUE, 
+                   fillOpacity = 0.2, popup = ~popup, 
+                   group = "140-km Border Zone") |> 
+  addCircleMarkers(data = leaf_cities, radius = 1, 
+                   color = ~city_color(dist_to_border), stroke = FALSE, 
+                   fillOpacity = 1, popup = ~popup, 
+                   group = "Distance to National Border (km)") |>
+  addLegend(colors = c("orange", "red"),
+            labels = c("Equidistance Zone from National Border", "140-km Border Zone"),
+            title = "Layers", position = "bottomright") |> 
+  addLegend(pal = city_color, values = leaf_cities$dist_to_border, 
+            title = "Distance (km)", position = "bottomright") |> 
+  addLayersControl(baseGroups = "OpenStreetMap", 
+                   overlayGroups = c("State Boundaries", 
+                                     "Distance to National Border (km)",
+                                     "Equidistance Zone from National Border", 
+                                     "140-km Border Zone"))
 ```
 
 **Methods note**: In 2–3 sentences, describe the CRS transformation
 needed to convert from `eqdc` to `leaflet`-compatible coordinates, and
 any design choices you made to keep the map responsive (e.g., filtering,
 clustering, or simplifying geometries).
+
+The transformation of the state, city, and zone data needed for its
+conversion into leaflet was CRS4326. When trying to keep the map
+readable, I made sure to layer and adjust opacity of the circle markers
+so the distance to the border was more prominent than the zone layers.
 
 ------------------------------------------------------------------------
 
