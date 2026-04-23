@@ -167,7 +167,7 @@ Size: 7801, 7681, 6; resolution: 30m x 30m; CRS: WSG 84
 We only want to analyze our image for the regions surrounding Palo (our AOI). Transform your AOI to the CRS of the landsat stack and use it to crop your raster stack.
 
 ```{r}
-palo_utm <- bbox_palo |> 
+palo_utm <- palo |> 
   st_transform(crs(landsat_stack))
 
 landsat_crop <- crop(landsat_stack, palo_utm)
@@ -203,15 +203,15 @@ For question 2, make four unique combinations:
 What does each image allow you to see?
 
 ```{r}
-RGB <- plotRGB(landsat_crop, r = 4, g = 3, b = 2, stretch = "lin", 
+plotRGB(landsat_crop, r = 4, g = 3, b = 2, stretch = "lin", 
         main = "Natural Color: Red-Green-Blue")
 #this natural color map shows water, veg, urban areas, and clouds
 
-NIR-R-G <- plotRGB(landsat_crop, r = 5, g = 4, b = 3, stretch = "lin",
+plotRGB(landsat_crop, r = 5, g = 4, b = 3, stretch = "lin",
         main = "Color Infrared: NIR-Red-Green\n(Bright red = healthy vegetation)")
 #this color infared map shows healthy veg, water, and soil
 
-NIR-SWIR1 <- plotRGB(landsat_crop, r = 5, g = 6, b = 4, stretch = "lin",
+plotRGB(landsat_crop, r = 5, g = 6, b = 4, stretch = "lin",
         main = "Water Focus: NIR-SWIR1-Red\n(Dark blue = open water/flooding)")
 #this false color map shows water and veg
 
@@ -262,8 +262,9 @@ WRI <- (landsat_crop$green + landsat_crop$red) /
   (landsat_crop$nir08 + landsat_crop$swir16)
 
 #SWI
-SWI <- 1 / sqrt(landsat_crop$blue + landsat_crop$swir16)
+SWI <- 1 / sqrt(landsat_crop$blue - landsat_crop$swir16)
 
+plot(SWI)
 stacked <- c(NDVI, NDWI, MNDWI, WRI, SWI)
 names(stacked) <- (c("NDVI", "NDWI", "MNDWI", "WRI", "SWI"))
 
@@ -296,28 +297,30 @@ For all 5 index rasters do the following apply the appropriate threshold and the
 -   Plot the stack so that floods are blue, and background is white.
 
 ```{r}
-ndvi_flood  <- app(NDVI,  function(x) ifelse(x > 0, 1, 0))
+ndvi_flood  <- app(NDVI,  function(x) ifelse(x < 0, 1, 0))
 
-ndwi_flood  <- app(NDWI,  function(x) ifelse(x < 0, 1, 0))
+ndwi_flood  <- app(NDWI,  function(x) ifelse(x > 0, 1, 0))
 
-mndwi_flood  <- app(MNDWI,  function(x) ifelse(x < 0, 1, 0))
+mndwi_flood  <- app(MNDWI,  function(x) ifelse(x > 0, 1, 0))
 
-wri_flood  <- app(WRI,  function(x) ifelse(x < 1, 1, 0))
+wri_flood  <- app(WRI,  function(x) ifelse(x > 1, 1, 0))
 
-swi_flood  <- app(SWI,  function(x) ifelse(x < 0, 1, 0))
+swi_flood  <- app(SWI,  function(x) ifelse(x < 5, 1, 0))
 
+
+plot(swi_flood)
 stacked_flood <- c(ndvi_flood, ndwi_flood, mndwi_flood, wri_flood, swi_flood)
 names(stacked_flood) <- (c("NDVI", "NDWI", "MNDWI", "WRI", "SWI"))
 
 plot(stacked_flood,
-     col = c("blue", "white"))
+     col = c("white", "blue"))
 ```
 
 ### Step 3:
 
 Describe the differences and similarities between the different maps
 
-The NDWI map has a more refined view of of the water areas whereas the WRI, NDVI, and MNDWI maps are more generalized. The SWI map does not have flood mapping.
+The NDWI and SWI maps have a more refined views of of the flooded areas whereas the WRI, NDVI, and MNDWI maps are more generalized. This can be seen in the break in the stream, where other maps have this area more filled in.
 
 # Question 4:
 
@@ -353,6 +356,7 @@ dim(stack_extracted)
 
 ```{r}
 stack_extracted_clean <- na.omit(stack_extracted)
+dim(stack_extracted_clean)
 ```
 
 ### Step 3:
@@ -362,8 +366,8 @@ stack_extracted_clean <- na.omit(stack_extracted)
 -   Once the `kmeans` algorithm runs, the output will be a list of components. One of these is `cluster` which provides a vector of integers from (1:`k`) indicating the cluster to which each row was allocated.
 
 ```{r}
-k <- 3
-kmeans_stack <- kmeans(stack_extracted, centers = k)
+k <- 5
+kmeans_stack <- kmeans(stack_extracted_clean, centers = k)
 ```
 
 ### Step 4:
@@ -403,7 +407,7 @@ Great! You now have a categorical raster with categories 1:k. The issue is we do
 -   Finally add this to add to your flood raster stack with `c()` and make a new plot!
 
 ```{r}
-flood_table <- table(values(stacked_flood[[1]]), values(kmeans_raster))
+flood_table <- table(values(stacked_flood[[2]]), values(kmeans_raster))
 
 flood_cluster <- which.max(flood_table[1,])
 
