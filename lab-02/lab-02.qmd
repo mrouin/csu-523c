@@ -224,7 +224,7 @@ intersect or fall within a bounding polygon.
 :::
 
 ```{r}
-cities <- read_csv("lab-02/data/simplemaps_uscities_basicv1/uscities.csv")
+cities <- read_csv("data/simplemaps_uscities_basicv1/uscities.csv")
 
 cities_sf <- st_as_sf(cities, coords = c("lng", "lat"), crs = 4326) |> 
   st_transform(eqdc)
@@ -467,6 +467,9 @@ for label placement — required when using `ggrepel` with `sf` objects.
 :::
 
 ```{r}
+na_boundaries <- ne_countries(scale = "medium", returnclass = "sf") |>
+  filter(admin %in% c("United States of America", "Canada", "Mexico"))
+
 big_cities <- cities_conus |> 
   slice_max(population, n = 10)
 
