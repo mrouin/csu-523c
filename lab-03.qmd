@@ -158,13 +158,8 @@ To achieve this:
     is mute
 
 ```{r}
-?st_centroid
-us_counties |> 
-  st_centroid(name)
-
 us_centroid <- us_counties |> 
-  st_union() |> 
-  st_cast("MULTIPOINT")
+  st_centroid() 
 ```
 
 ### Step 1.3
@@ -238,14 +233,16 @@ valid/simple.
 
 ```{r}
 voronoi <- us_centroid |> 
-  st_voronoi() |> 
+  st_combine() |> 
   st_cast("MULTIPOINT") |> 
+  st_voronoi() |> 
   st_as_sf() |> 
   mutate(ID = 1:n())
 
 triangulate <- us_centroid |> 
-  st_triangulate() |> 
+  st_combine() |> 
   st_cast("MULTIPOINT") |> 
+  st_triangulate() |> 
   st_as_sf() |> 
   mutate(ID = 1:n())
 
@@ -423,11 +420,11 @@ The form of a function is:
 #| echo: true
 #| eval: false
 
-name = function(arg1, arg2) {
+#name = function(arg1, arg2) {
   
-  ... code goes here ...
+#  ... code goes here ...
   
-}
+#}
 ```
 
 ------------------------------------------------------------------------
@@ -474,11 +471,11 @@ Use your new function to plot each of your tessellated surfaces and the
 original county data (5 plots in total):
 
 ```{r}
-plot(voronoi_conus, "Voronoi Tessellation")
-plot(triangulate_conus, "Delaunay Triangulation")
-plot(grid_conus, "Square Grid (n = 70)")
-plot(hexagon_conus, "Hexagonal Grid (n = 70)")
-plot(us_counties, "Original County Data")
+plot(voronoi_conus)
+plot(triangulate_conus)
+plot(grid_conus)
+plot(hexagon_conus)
+plot(us_counties)
 
 #The plots vary in accuracy due to the simplification of the conus boundary, specifically with the Voronoi and Triangulation plots.
 ```
@@ -544,8 +541,8 @@ original counties.
 ```{r}
 tesselation_summary(voronoi_conus, "Voronoi Tessellation")
 tesselation_summary(triangulate_conus, "Delaunay Triangulation")
-tesselation_summary(grid_conus, "Square Grid (n = 70)")
-tesselation_summary(hexagon_conus, "Hexagonal Grid (n = 70)")
+tesselation_summary(grid_conus, "Square Grid")
+tesselation_summary(hexagon_conus, "Hexagonal Grid")
 tesselation_summary(us_counties, "Original County Data")
 ```
 
@@ -557,13 +554,13 @@ single `data.frame`
 For example, if your function is called `sum_tess`, the following would
 bind your summaries of the triangulation and voroni object.
 
-```{r, eval = FALSE}
+```{r, eval = TRUE}
 bound_summary <- bind_rows(
   tesselation_summary(triangulate_conus, "Delaunay Triangulation"),
   tesselation_summary(voronoi_conus, "Voronoi Tessellation"),
-  tesselation_summary(hexagon_conus, "Hexagonal Grid (n = 70)"),
-  tesselation_summary(grid_conus, "Square Grid (n = 70)"),
-  tesselation_summary(us_counties, "Original County Data"),
+  tesselation_summary(hexagon_conus, "Hexagonal Grid"),
+  tesselation_summary(grid_conus, "Square Grid"),
+  tesselation_summary(us_counties, "Original County Data")
 )
 ```
 
@@ -594,11 +591,11 @@ contexts of the modifiable areal unit problem and with respect
 computational requirements.
 
 The delaunay triangulation and voronoi tesselation both only have a
-feature count of 1 and have no associated area whereas whereas the
-hexagonal grid, square grid, and original county data have higher
-feature counts and cover larger total area. This may result in errors
-downstream since point-in-polygon analysis, it allows you to understand
-how many points fall within a certain polygon.
+feature count of 1, whereas the hexagonal grid, square grid, and
+original county data have higher feature counts but cover a smaller
+total mean area. This may result in errors downstream since
+point-in-polygon analysis allows you to understand how many points fall
+within a certain polygon.
 
 ------------------------------------------------------------------------
 
@@ -1262,33 +1259,58 @@ standardize_weights <- function(geometry_sf) {
   return(W_std)
 }
 
-w_std <- standardize_weights(hexagon_conus)
+W_std <- standardize_weights(dam_aggregate)
+W_std_county <- standardize_weights(counties_pip)
 
-count_vec <- dam_aggregate_calcs$n
-age_vec   <- dam_aggregate_calcs$mean_age
-size_vec  <- dam_aggregate_calcs$mean_surface_area
-
-global_mean <- function(x) {
-  x[is.na(x)] <- mean(x, na.rm = TRUE)
-  x
+compute_spatial_lag <- function(attribute_vector, weight_matrix, 
+                                original_na_mask = NULL) {
+  if (is.null(original_na_mask)) {
+    original_na_mask <- is.na(attribute_vector)
+  }
+  global_mean <- mean(attribute_vector, na.rm = TRUE)
+  attribute_imputed <- ifelse(is.na(attribute_vector), 
+                              global_mean, 
+                              attribute_vector)  
+  
+spatial_lag <- weight_matrix %*% attribute_imputed
+  spatial_lag <- as.vector(spatial_lag)
+  
+  return(list(
+    lag = spatial_lag,
+    imputed = attribute_imputed,
+    na_mask = original_na_mask
+  ))
 }
 
-count_mean <- global_mean(count_vec)
-age_mean <- global_mean(age_vec)
-size_mean <- global_mean(size_vec)
+# Dam count (n has no NAs — zeros for empty tiles, not NA)
+lag_result_n    <- compute_spatial_lag(dam_aggregate$n, W_std)
 
-count_lag <- as.numeric(w_std %*% count_mean)
-age_lag  <- as.numeric(w_std %*% age_mean)
-size_lag <- as.numeric(w_std %*% size_mean)
+# Mean year completed (NA where tile has no dams)
+lag_result_year <- compute_spatial_lag(dam_aggregate$mean_year_completed, W_std)
 
-mask_count <- !is.na(count_vec)
-mask_age <- !is.na(age_vec)
-mask_size <- !is.na(size_vec)
+# Mean surface area (NA where tile has no dams)
+lag_result_area <- compute_spatial_lag(dam_aggregate$mean_surface_area, W_std)
 
-cor_count <- cor(count_vec[mask_count], count_lag[mask_count])
-cor_age   <- cor(age_vec[mask_age],age_lag[mask_age])
-cor_size  <- cor(size_vec[mask_size], size_lag[mask_size])
+# Correlation for each (use na_mask to exclude imputed values)
+cor_count <- cor(lag_result_n$imputed, lag_result_n$lag, use = "complete.obs")
+cor_age <- cor(lag_result_year$imputed[!lag_result_year$na_mask],
+                lag_result_year$lag[!lag_result_year$na_mask], use = "complete.obs")
+cor_size <- cor(lag_result_area$imputed[!lag_result_area$na_mask],
+                lag_result_area$lag[!lag_result_area$na_mask], use = "complete.obs")
 
+lag_result <- compute_spatial_lag(dam_aggregate$n, W_std)
+lag_tess <- lag_result$lag
+n_imputed <- lag_result$imputed
+na_mask <- lag_result$na_mask
+
+cor_value <- cor(lag_result$imputed[!lag_result$na_mask], lag_result$lag[!lag_result$na_mask], use = "complete.obs")
+
+lag_county <- compute_spatial_lag(counties_pip$n, W_std_county)
+
+#The correlation value is 0.824 which indicates that there is a strong correlation with neighboring tiles 
+```
+
+```{r}
 classify_moran <- function(r) {
   abs_r <- abs(r)
   case_when(abs_r >= 0.5 ~ "Strong",
@@ -1306,7 +1328,7 @@ lag_summary |>
     caption   = "Spatial Lag Correlations for Dam Attributes") |> 
     kableExtra::kable_styling("striped", full_width = TRUE, font_size = 14)
 
-#The data indicates that the spatial lag correlation is negligible for the mean dam age and the mean surface area but is has a strong correlation for dam count. This indicates that spatial neighbors in the dam count data have similar attributes to one another.
+#The data indicates that the spatial lag correlation is negligible for the mean surface area but is has a strong correlation for dam count and mean dam age. This indicates that spatial neighbors in the dam count data have similar attributes to one another.
 ```
 
 ### Step 5.3
@@ -1366,10 +1388,67 @@ assign_lisa_quadrants <- function(attribute_vector, spatial_lag_vector) {
     z_attr < 0 & z_lag > 0 ~ "LH",
     TRUE ~ NA_character_
   )
+  
   return(list( z_attr = z_attr, z_lag = z_lag, quadrant = quadrant))
 }
 
-lisa_count <- assign_lisa_quadrants(count_mean, count_lag)
+lag_result  <- lag_result_n   # or lag_result_year / lag_result_area
+lisa_result <- assign_lisa_quadrants(lag_result$imputed, lag_result$lag)
+
+moran_data <- data.frame(
+  z     = lisa_result$z_attr,
+  lag_z = lisa_result$z_lag,
+  quad  = lisa_result$quadrant
+)
+
+plot_lisa_map <- function(geometry_sf, title = "LISA Map") {
+
+  lisa_colors <- c("HH" = "#d73027", "LL" = "#4575b4",  "HL" = "#fee090", "LH" = "#91bfdb")
+  
+  ggplot(geometry_sf) +
+    geom_sf(aes(fill = lisa), color = NA) +
+    scale_fill_manual(values = lisa_colors, na.value = "gray90") +
+    labs(title = title) +
+    theme_void() +
+    theme(legend.position = "bottom")
+}
+```
+
+```{r}
+assign_lisa_quadrants <- function(attribute_vector, spatial_lag_vector) {
+  # Standardize both
+  z_attr <- as.vector(scale(attribute_vector))
+  z_lag  <- as.vector(scale(spatial_lag_vector))
+  
+  # Assign quadrants
+  quadrant <- case_when(
+    z_attr > 0 & z_lag > 0 ~ "HH",
+    z_attr < 0 & z_lag < 0 ~ "LL",
+    z_attr > 0 & z_lag < 0 ~ "HL",
+    z_attr < 0 & z_lag > 0 ~ "LH",
+    TRUE ~ NA_character_
+  )
+  return(list( z_attr = z_attr, z_lag = z_lag, quadrant = quadrant))
+}
+
+point_in_polygon = function(points, polygon, var){
+  st_join(polygon, points) |> 
+    st_drop_geometry() |> 
+    count(get(var)) |> 
+    setNames(c(var, "n")) |>
+    left_join(polygon, by = var) |> 
+    st_as_sf() 
+}
+
+tess_counts <- point_in_polygon(dams2, hexagon_conus, "ID")
+
+lisa_result_county <- assign_lisa_quadrants(counties_pip$n, lag_county$lag)
+counties_pip$lisa <- lisa_result_county$quadrant
+
+lag_n <- compute_spatial_lag(dam_aggregate$n, W_std)
+lisa_count <- assign_lisa_quadrants(lag_n$imputed, lag_n$lag)
+lisa_age   <- assign_lisa_quadrants(lag_result_year$imputed, lag_result_year$lag)
+lisa_size  <- assign_lisa_quadrants(lag_result_area$imputed, lag_result_area$lag)
 
 moran_data <- data.frame(
   z = lisa_count$z_attr,
@@ -1573,6 +1652,10 @@ Compute neighbors and spatial lag for your **recommended tessellation**:
 `st_touches(..., sparse = FALSE)`. Include only tiles within the cropped
 boundary.
 
+```{r}
+W_neighbor <- standardize_weights(hexagon_conus)
+```
+
 **b.** Remove self-neighbors: `diag(W) <- 0`
 
 **c.** Row-standardize weights: divide each row by its sum, handling
@@ -1581,8 +1664,17 @@ isolated tiles.
 **d.** Compute spatial lag:
 $\text{lag} = W_{\text{std}} \times \text{dam\_counts}$
 
+```{r}
+lag_n <- compute_spatial_lag(dam_aggregate$n, W_neighbor)
+```
+
 **e.** Standardize both dam counts and spatial lag (z-score
 normalization).
+
+```{r}
+z_counts <- as.vector(scale(lag_n$imputed))
+z_lag <- as.vector(scale(lag_n$lag))
+```
 
 ::: callout-important
 ## Validation Checkpoint (Optional but Recommended)
@@ -1592,22 +1684,17 @@ After computing the neighbor matrix, verify it's valid:
 ```{r}
 #| eval: false
 # Check 1: Is the matrix symmetric? (for undirected adjacency)
-all(neighbor_matrix == t(neighbor_matrix))
+all(W_neighbor == t(W_neighbor))
 
 # Check 2: Are all rows row-standardized (divide by row sum)?
-rowSums(neighbor_weights)  # Should all be 1 (or 0 for isolated tiles)
+rowSums(W_neighbor)  # Should all be 1 (or 0 for isolated tiles)
 
 # Check 3: Are there isolated tiles (no neighbors)?
-sum(rowSums(neighbor_weights) == 0)
+sum(rowSums(W_neighbor) == 0)
 
 # If any isolated tiles, document how you'll handle them in spatial lag calculation
 ```
 :::
-
-```{r}
-W_std_tess <- standardize_weights(tess_counts)
-W_std_county <- standardize_weights(county_counts)
-```
 
 ### Step 6.3
 
@@ -1636,7 +1723,7 @@ quadrant distribution (% of tiles in HH vs. LL) reveals whether the
 landscape is dominated by hotspots, coldspots, or mixed.
 
 ```{r}
-lag_result_tess  <- compute_spatial_lag(tess_counts$n, W_std_tess)
+lag_result_tess  <- compute_spatial_lag(tess_counts$n, W_std)
 lisa_result_tess <- assign_lisa_quadrants(lag_result_tess$imputed, lag_result_tess$lag)
 
 tess_counts$z      <- lisa_result_tess$z_attr
