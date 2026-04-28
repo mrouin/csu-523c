@@ -140,7 +140,7 @@ cat("Cloud cover:", stac_query$features[[1]]$properties$`eo:cloud_cover`, "%\n")
 assets_download(items = stac_query,
   asset_names = c('coastal', 'blue', 'green', 'red', 'nir08', 'swir16'),
   output_dir = 'data',
-  overwrite = FALSE)
+  overwrite = TRUE)
 
 raster_files <- list.files(path = "data",
   pattern = "*.TIF$",
@@ -374,7 +374,7 @@ kmeans_stack <- kmeans(stack_extracted_clean, centers = k)
 
 -   Create a new raster object by copying one of the original bands. For example:
 
-```{r, echo = TRUE, eval = FALSE}
+```{r, echo = TRUE, eval = TRUE}
 kmeans_raster <- stacked_flood[[2]]
 ```
 
