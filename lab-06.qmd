@@ -25,8 +25,8 @@ library(tidyverse)
 library(plotly)
 
 library(dataRetrieval)
-install.packages("remotes")
-remotes::install_github("mikejohnson51/climateR")
+#install.packages("remotes")
+#remotes::install_github("mikejohnson51/climateR")
 library(climateR)
 library(terra)
 library(exactextractr)
@@ -332,6 +332,9 @@ Fit all models to the training data on the log scale. Exclude the raw `Flow` col
 ```{r}
 #| eval: false
 #| echo: false
+
+install.packages("earth")
+library(earth)
 models <- map(mods, ~ fit(.x, log_flow ~ ., data = select(training, -Flow)))
 
 (models_tbl <- as_modeltime_table(models))
@@ -357,6 +360,8 @@ Describe what you see. Use these benchmarks to interpret the numbers:
 -   **MAPE** — intuitive % error, but inflated in low-flow months when Flow ≈ 0
 -   **RMSE** — penalizes large errors heavily; compare to mean test-period flow for context
 -   Do boosted models (ARIMA-boost, Prophet-boost) outperform their base versions? If so, the nonlinear climate signal is worth capturing.
+
+The base vector models are outperformed by the boosted models, but only slightly. All models have a MASE value that is less than 1 indicating that it is more effective than the previous year's month. Their MAPE values have a wider range, from 13.3% with the EARTH model and icreasing values with the other models. The ETS model actually outperformed the regression with arima and had the same value as the amira xgboost model. Their RMSE values are all similar, with the EARTH model having the lowest value and the other models' values coming in between 0.1-0.2 above it.
 
 ### Test Set Forecast
 
@@ -390,6 +395,8 @@ test_forecast |>
 
 Do predictions track actuals during the 2022–2023 test window? Are confidence intervals capturing observed values? Note any discontinuities at the 2022 boundary between training and test.
 
+Overall the predictions track the actual values with a couple models overshooting in 2022 (arima and ets) and a couple models under-perdicting in 2023 (prophet, regression, and ets).
+
 ### Refit to Full Dataset
 
 Refit all models to the complete 2013–2023 record before forecasting forward. Refitting allows auto-tuned models (`auto.arima`, `ets`) to re-optimize their parameters with more data:
@@ -405,6 +412,8 @@ modeltime_accuracy(refit_tbl) |>
 ```
 
 Do the accuracy metrics change after refitting? Why or why not?
+
+The accuracy metrics did not change with the refitting indicating that the addition of the full time frame of data did not impact the accuracy of any of the models.
 
 ### Forecast into the Future (2024–2033)
 
@@ -444,13 +453,23 @@ Examine your 10-year forecast and reflect on the following:
 
 1.  **Model agreement**: Do ARIMA and Prophet project similar trajectories? If they diverge, what does that tell you about their different assumptions (statistical stationarity vs. flexible trend)?
 
+    1.  The amira and prophet with regressors models project similar results though amira projects above prophet. The amira and prophet with xgboost greatly diverge in their predictions with the amira model predicting above the prophet xgboost. This indicates that the amira model appears to have flexible assumptions whereas the prophet xgboost has stationary assumptions.
+
 2.  **Forecast quality**: Which model would you recommend to CWCB for water-supply planning? Justify with your accuracy metrics.
+
+    1.  I would recommend the use of the the earth model since this has the lowest MAPE and RMSE values indicating that it has the lowest intuitive error and highest accuracy to the actual data.
 
 3.  **Negative predictions**: If any model predicts negative flow, explain why this happens and what you would do to fix it in a production context (hint: log-transformation of Flow before modeling).
 
+    1.  The model did not predict any negative flows but if it did, this is likely to occur during low flow months where the model is anticipating a higher flow. To fix this, you would log-transform the flow data and then rerun the models since this will help to normalize the values.
+
 4.  **Regressor value**: The MACA climate projections assume a specific emissions scenario. How does uncertainty in those projections propagate into your streamflow forecast?
 
+    1.  Uncertainty in the climate projections can change the streamflow levels since this will decrease the level of accuracy on the models. The models will likely have difficulty processing the variability in climate projections leading to less accurate flow values.
+
 5.  **Improvement path**: What information not in `tmax`, `ppt`, `srad` would most improve this forecast? (Consider: snowpack, upstream storage, irrigation demand.)
+
+    1.  To improve this forecast I would recommend including the following additional values since the additional data is likely to refine the model forecast. Snowpack levels would give insight into the potential streamflow values following snowmelt and peak snowmelt day may help to tune the period that we're seeing the peak flow levels.
 
 At this stage you have a working end-to-end time series forecasting pipeline — the same structural approach used by CWCB, USBR, and state water agencies for operational planning. The processes you learned in `tidymodels` apply directly here, and you can extend this framework with cross-validation (`time_series_cv()`), feature engineering (lag variables, rolling means), and hyperparameter tuning.
 
@@ -485,6 +504,16 @@ splits_reg <- time_series_split(pf_reg, assess = "24 months", cumulative = TRUE)
 # Use log_flow ~ . consistent with the main pipeline; exclude raw Flow
 models_reg <- map(mods, ~ fit(.x, log_flow ~ .,
                                data = select(training(splits_reg), -Flow)))
+
+(models_tbl_reg <- as_modeltime_table(models_reg))
+
+calibration_table_reg <- modeltime_calibrate(models_tbl_reg, select(training(splits_reg), -Flow), quiet = FALSE)
+
+modeltime_accuracy(calibration_table_reg) |>
+  arrange(mae) |>
+  select(.model_desc, mae, mape, mase, rmse, rsq)
 ```
 
 Does adding upstream flow improve MASE on the test set? If yes, the physical signal is worth including. If not, the climate data alone may be sufficient for monthly aggregation at this timescale.
+
+The addition of upstream flow decreased MASE values for the amira with xgboost errors and prophet with xgboost errors models but remained generally unchanged for the other models. This signal would be worth including to fine tune these models but would not have much of an impact on the other models.
